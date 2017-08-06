@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>Document</title>
+</head>
+<body>
+  有同学肯定觉得只看了静态文件服务器是不过瘾的。必须来点动态服务器才行，甚至MVC框架之类的才能摆上台面。但是冰冻三尺，非一日之寒；千寻之塔，也是起于砂石啊。所以这一章的目的是用来构建一个动态服务器的基础，下一章会在这个基础上，构建一个MVC框架。
+<br/>
+<br/>一门后端动态语言要达到Web的可用水平需要满足那些条件呢。让我们来想想，通常的PHP或是ASP/ASP.NET，甚至是JSP。一些基本的东东是什么呢。
+<br/><ul>
+<br/>	<li>Get/Post 数据获取，这个是最基本的</li>
+<br/>	<li>Cookie你都不支持，你让Session如何混。</li>
+<br/>	<li>Session，对于无状态的HTTP协议，Session的实现帮助后端太多了。</li>
+<br/></ul>
+<br/>以上这些支持几乎是必须的。缺少一部分，这个服务器都会缺胳膊少腿的。那么有了这些需求之后，我们就来实现吧。
+<br/>
+<br/>Anyway，架子搭起来先。我们的动态服务器并不是在静态服务器的基础上再增强的，所以需要一个全新的架子。
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>var http = require(“http”);
+<br/>
+<br/>var server = http.createServer(function (request, response){
+<br/>    response.setHeader(“Content-Type”, “text/plain”);
+<br/>    response.writeHead(200, “Ok”);
+<br/>    // TODO
+<br/>    // response.write("");
+<br/>    response.end();
+<br/>});
+<br/>
+<br/>server.listen(8000);</pre>
+<br/>嗯，还是很简单很朴素的感觉。
+<br/><h3>Get/Post支持</h3>
+<br/>HTTP请求协议主要包含以下几种请求类型：
+<br/><ul>
+<br/>	<li>GET</li>
+<br/>	<li>POST</li>
+<br/>	<li>HEAD</li>
+<br/>	<li>PUT</li>
+<br/>	<li>DELETE</li>
+<br/>	<li>OPTIONS</li>
+<br/>	<li>TRACE</li>
+<br/></ul>
+<br/>其中最常见的就是GET和POST了。其次，PUT和DELETE在RESTful请求中也是十分常见的。在这里，我们只讨论GET和POST方法。客户端向服务端传递数据也是主要通过这两种方法。那么我们来进一步剖析GET和POST方法吧。
+<br/>
+<br/>GET方法最为常见，其形式大致如下：
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>http://localhost:8000/?foo=bar</pre>
+<br/>用CURL工具来查看下协议的细节吧:
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>curl  -v http://localhost:8000/?foo=bar</pre>
+<br/>看看请求头是什么样子：
+<br/><pre class=“brush: bash; gutter: true; first-line: 1”>GET /?foo=bar HTTP/1.1
+<br/>
+<br/>User-Agent: curl/7.20.1 (i686-pc-cygwin) libcurl/7.20.1 OpenSSL/0.9.8r zlib/1.
+<br/>Host: localhost:8000
+<br/>Accept: /</pre>
+<br/>Get支持只需要分析问号后面的foo=bar部分就ok的。在写出我们Node的代码之前，可以少许的看看PHP和ASP.NET是如何调用的。
+<br/>
+<br/>PHP：
+<br/><pre class=“brush: php; gutter: true; first-line: 1”>$_GET[“name”]</pre>
+<br/>ASP.NET：
+<br/><pre class=“brush: vb; gutter: true; first-line: 1”>Request.QueryString(“name”)</pre>
+<br/>嗯，接口不错，那我们为Node也写一个接口吧，保持简单，request.get(name)就可以了。Node在处理这个问题上，提供了URL模块和QueryString模块，用于解析URL和QueryString部分（参见：<a href=“http://nodejs.org/docs/v0.6.1/api/http.html#request.url”>http://nodejs.org/docs/v0.6.1/api/http.html#request.url</a>）。
+<br/>
+<br/>引入url和querystring模块吧。
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>var url = require(“url”);
+<br/>var qs = require(“querystring”);</pre>
+<br/>对于URL的解析，由于每一个请求进来，并不是每个程序员都需要获取query上的值的。这种场景下，我们没必要为其浪费解析URL的CPU时间，所以延迟解析吧。
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>var _urlMap;
+<br/>
+<br/>request.get = function (key) {
+<br/>    if (!_urlMap) {
+<br/>        urlMap = url.parse(request.url, true);
+<br/>    }
+<br/>    return urlMap.query[key];
+<br/>};</pre>
+<br/>只有后续有代码调用到了get方法，才会解析一次。如果没有用到，这里就不占用空间和CPU时间了。
+<br/>
+<br/>接下来搞定Post方法，接口依然保持一致，那就是request.post(name)。POST请求与GET请求略有不同在于GET请求是不用向服务端发送body部分的报文的。这里有点类似条件请求的响应，如果是304，只有头信息，没有body信息；如果是200，才会将body和头信息一起发回给客户端。这里反之，get请求不用发送body信息，只有post才会发送body信息。所以这里对于前端来说，如果不发送数据到服务端，用get方法可以节省一些带宽的。对于小数据量的发送，通过URL请求发送时携带就足够了。（URL的最大长度在IE下是2k，超过此额度，请用post吧）。
+<br/>
+<br/>具体参见YSlow的这条Rule：<a href=“http://developer.yahoo.com/performance/rules.html#ajax_get”>http://developer.yahoo.com/performance/rules.html#ajax_get</a>。
+<br/>
+<br/>一般而言，POST请求都是通过表单发送出来的。浏览器会自动的将数据编码为foo=bar&baz=xxx这样的格式。而且与get方法不同的是，在接受数据的时候，需要通过监听data事件接受所有数据，因为客户端可能是通过chunk方式逐步发送过来的。
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>if (request.method === “POST”) {
+<br/>    var _postData = “”,
+<br/>        _postMap = “”;
+<br/>
+<br/>    request.on(‘data’, function (chunk) {
+<br/>        _postData += chunk;
+<br/>    })
+<br/>    .on(“end”, function () {
+<br/>        request.postData = _postData;
+<br/>        request.post = function (key) {
+<br/>            if (!_postMap) {
+<br/>                _postMap = qs.parse(_postData);
+<br/>            }
+<br/>            return _postMap[key];
+<br/>        };
+<br/>    });
+<br/>}</pre>
+<br/>之所以有request.postData = _postData这样一句，因为客户端上传的并不一定是key=value&key=value的方式，或者是一个json对象，或者是一个xml文档。这个时候这个数据留给程序员自己去再解析。
+<br/>
+<br/>相同的，一切为了性能，所以延迟解析，并且只在请求方法为POST的时候才有这些方法。
+<br/>
+<br/>最终的代码大致如下：
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>var server = http.createServer(function (request, response) {
+<br/>    var handle = function () {
+<br/>        response.setHeader(“Content-Type”, “text/plain”);
+<br/>        response.writeHead(200, “Ok”);
+<br/>        response.write(request.get(“foo”));
+<br/>        response.write(request.post(“foo”));
+<br/>        response.end();
+<br/>    };
+<br/>
+<br/>    var _urlMap;
+<br/>    request.get = function (key) {
+<br/>        if (!_urlMap) {
+<br/>            urlMap = url.parse(request.url, true);
+<br/>        }
+<br/>        return urlMap.query[key];
+<br/>    };
+<br/>
+<br/>    if (request.method === “POST”) {
+<br/>        var _postData = “”,
+<br/>            _postMap = “”;
+<br/>
+<br/>        request.on(‘data’, function (chunk) {
+<br/>            _postData += chunk;
+<br/>        })
+<br/>        .on(“end”, function () {
+<br/>            request.postData = _postData;
+<br/>            request.post = function (key) {
+<br/>                if (!_postMap) {
+<br/>                    _postMap = qs.parse(_postData);
+<br/>                }
+<br/>                return _postMap[key];
+<br/>            };
+<br/>            handle();
+<br/>        });
+<br/>    } else {
+<br/>        handle();
+<br/>    }
+<br/>});</pre>
+<br/>我们通过curl来模拟一次同时带有post数据和get数据的请求吧：
+<br/><pre class=“brush: bash; gutter: true; first-line: 1”>curl --data “foo=postdata” http://localhost:8000/?foo=getdata</pre>
+<br/>看看响应：
+<br/><pre class=“brush: bash; gutter: true; first-line: 1”>getdata
+<br/>postdata</pre>
+<br/>嗯，完全满足需求。（注意：处理文件上传的请求会更复杂，再次不做讨论，如需深入，请移步<a href=“http://cnodejs.org/blog/?p=2207”>http://cnodejs.org/blog/?p=2207</a>）
+<br/><h3>Cookie支持</h3>
+<br/>尽管身为前端工程师，对Cookie有着相当多的怨言。比如不方便调用；每次都会附带在请求中，占用带宽。一个经典的面试题目是，假如客户端禁用了Cookie，Session是否有效？如何有效？
+<br/>
+<br/>不知各位是否有答案。关于Cookie与Session之间的关系，我们下一节再来详述。先来解释下Cookie是如何工作的吧，在协议里是怎么传递的。
+<br/><ol>
+<br/>	<li>请求传递Cookie
+<br/>如果当前域名下存在Cookie，浏览器在每次发起HTTP请求的时候，都会在请求头中带上这样一项：
+<br/>Cookie: UserCookie=AgiTOOpJet; RegisteredUserCookie=PXLgvDECVD; JSESSIONID=BF0844821;
+<br/>注意，是每次。</li>
+<br/>	<li>响应传递Cookie</li>
+<br/></ol>
+<br/>如果服务端设置了Cookie，则会在相应头里发出这样一项：
+<br/>
+<br/>Set-Cookie:JSESSIONID=D211F624077921CEACD202C1ACDD30C6; Path=/
+<br/>注意，这里只是单次的，有需求才发送。浏览器端在接受到这个header之后，会将这项存在客户端，下次发送请求时会带在请求头中。
+<br/>
+<br/>那么我们要在Node中取得客户端发送过来的cookie就很简单了，从header中读取cookie就ok。
+<br/>
+<br/>var cookieStr = request.headers.cookie || “”;
+<br/>
+<br/>再次看看别的语言中是如何做cookie获取和调用的:
+<br/><ul>
+<br/>	<li>PHP:
+<br/><pre class=“brush: php; gutter: true; first-line: 1”>$_COOKIE[“user”];</pre>
+<br/></li>
+<br/>	<li>ASP:
+<br/><pre class=“brush: vb; gutter: true; first-line: 1”>Request.Cookies(“firstname”)</pre>
+<br/></li>
+<br/></ul>
+<br/>中和一下，那么我们要的API就是：request.cookie(key)。
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>var _cookieMap;
+<br/>
+<br/>request.cookie = function (key) {
+<br/>    if (!_cookieMap) {
+<br/>        _cookieMap = cookie.parse(request.headers.cookie || “”);
+<br/>    }
+<br/>    return _cookieMap[key];
+<br/>};</pre>
+<br/>嗯，还是延迟解析的老把戏。等等，cookie.parse从哪里来的？
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>var cookie = require("./cookie");</pre>
+<br/>嗯，没有枪，没有炮，我们自己造。在写这个具体的parse函数之前，有必要研究一下cookie的格式。老规矩，还是按标准协议（<a href=“http://www.w3.org/Protocols/rfc2109/rfc2109”>http://www.w3.org/Protocols/rfc2109/rfc2109</a>）来：
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>av-pairs        =       av-pair *(";" av-pair)
+<br/>av-pair         =       attr ["=" value]        ; optional value
+<br/>attr            =       token
+<br/>value           =       word
+<br/>word            =       token | quoted-string</pre>
+<br/>如果你看不懂以上这段描述的话，我来简单介绍吧。
+<br/><ol>
+<br/>	<li>通过;分割多个属性/值对。</li>
+<br/>	<li>属性值对由属性，等号，和值构成。等号和值是可选的，也就是说可能只有属性，没有值。</li>
+<br/></ol>
+<br/>嗯，仅此而已。那么实现吧。
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>exports.parse = function (cookie) {
+<br/>    var map = {};
+<br/>    var pairs = cookie.split(";");
+<br/>    pairs.forEach(function (pair) {
+<br/>        var kv = pair.split("=");
+<br/>        map[kv[0]] = kv[1] || “”;
+<br/>    });
+<br/>
+<br/>    return map;
+<br/>};</pre>
+<br/>由于Node使用的是V8，所以可以放心大胆的用这些来自ES5的方法。
+<br/>
+<br/>在之前的代码中加入响应Cookie：
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>response.write(request.cookie(“foo”) + “\n\r”);</pre>
+<br/>然后通过curl伪装cookie测试一下吧：
+<br/><pre class=“brush: bash; gutter: true; first-line: 1”>curl -i --cookie “foo=cookiedata” --data “foo=postdata” http://localhost:8000/?foo=getdata</pre>
+<br/>响应：
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>HTTP/1.1 200 Ok
+<br/>Content-Type: text/plain
+<br/>Connection: keep-alive
+<br/>Transfer-Encoding: chunked
+<br/>
+<br/>getdata
+<br/>postdata
+<br/>cookiedata</pre>
+<br/>嗯，just so so。
+<br/>
+<br/>再来看看响应cookie吧。同样先对比下API吧：
+<br/><ul>
+<br/>	<li>ASP.NET
+<br/><pre class=“brush: vb; gutter: true; first-line: 1”>Response.Cookies(“firstname”)=“Alex”</pre>
+<br/></li>
+<br/>	<li>PHP
+<br/><pre class=“brush: php; gutter: true; first-line: 1”>setcookie(name, value, expire, path, domain);</pre>
+<br/></li>
+<br/></ul>
+<br/>对比了一下，取个中间的而且符合JavaScript的接口吧：response.setCookie(name, value, expire, path, domain)。
+<br/>
+<br/>然后再看看响应的cookie头在协议标准里是怎样定义的呢。
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>set-cookie      =       “Set-Cookie:” cookies
+<br/>   cookies         =       1#cookie
+<br/>   cookie          =       NAME “=” VALUE (";" cookie-av)
+<br/>   NAME            =       attr
+<br/>   VALUE           =       value
+<br/>   cookie-av       =       “Comment” “=” value
+<br/>                   |       “Domain” “=” value
+<br/>                   |       “Max-Age” “=” value
+<br/>                   |       “Path” “=” value
+<br/>                   |       “Secure”
+<br/>                   |       “Version” “=” 1DIGIT</pre>
+<br/>继续用我们能够看懂的语言解释吧：
+<br/><ol>
+<br/>	<li>响应头是Set-Cookie做key的，值由多个cookie组成。</li>
+<br/>	<li>每个cookie的必须包含的部分是name和value。</li>
+<br/>	<li>每个cookie还有一部分选项对，选项对之间通过;来分割。这些选项包含：
+<br/><ol>
+<br/>	<li>Comment，注释【可选】</li>
+<br/>	<li>Domain，域【可选】</li>
+<br/>	<li>Max-Age，标明这个cookie在客户端的最大存活时间，单位时间是秒。如果是0，则直接被禁掉【可选】</li>
+<br/>	<li>Path，标明在域下的那些路径下有效【可选，默认为当前路径】</li>
+<br/>	<li>Secure，这个比较特殊的选项标明的是否是https。【可选】</li>
+<br/>	<li>Version，版本号。【必选】</li>
+<br/></ol>
+<br/></li>
+<br/></ol>
+<br/>看到这么多可选项，看起来假定的接口要去适配这么多可选参数，是有点麻烦了（JavaScript没有那么方便的重载函数呀）。那么JSON搞起吧。
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>response.setCookie(cookie);</pre>
+<br/>这个cookie对象必选值是name和value。那么我们为这个cookie生成需要的字符串写一个stringify函数吧。
+<br/>
+<br/>最后要申明一下的是现行的Cookie格式，貌似几乎不包含Comment，Version之类的了。我参考了一些实现后，最后给出的实现是如下这样的。
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>exports.stringify = function (cookie) {
+<br/>    var buffer = [cookie.key, “=”, cookie.value];
+<br/>    if (cookie.expires) {
+<br/>        buffer.push(" expires=", (new Date(cookie.expires)).toUTCString(), “;”);
+<br/>    }
+<br/>
+<br/>    if (cookie.path) {
+<br/>        buffer.push(" path=", cookie.path, “;”);
+<br/>    }
+<br/>
+<br/>    if (cookie.domain) {
+<br/>        buffer.push(" domain=", cookie.domain, “;”);
+<br/>    }
+<br/>
+<br/>    if (cookie.secure) {
+<br/>        buffer.push(" secure", “;”);
+<br/>    }
+<br/>
+<br/>    if (cookie.httpOnly) {
+<br/>        buffer.push(" httponly");
+<br/>    }
+<br/>
+<br/>    return buffer.join("");
+<br/>};</pre>
+<br/>包装了工具方法之后，对于response.setCookie方法就比较简单了：
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>response.setCookie = function (cookieObj) {
+<br/>    response.setHeader(“Set-Cookie”, cookie.stringify(cookieObj));
+<br/>};</pre>
+<br/>由于一次请求可能会设置多个cookie，那个这个代码需要增强一下：
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>var _setCookieMap = {};
+<br/>
+<br/>response.setCookie = function (cookieObj) {
+<br/>    _setCookieMap[cookieObj.key] = cookie.stringify(cookieObj);
+<br/>    var returnVal = [];
+<br/>    for(var key in _setCookieMap) {
+<br/>         returnVal.push(_setCookieMap[key]);
+<br/>    }
+<br/>    response.setHeader(“Set-Cookie”, returnVal.join(", “));
+<br/>};</pre>
+<br/>Have a try：
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>response.setCookie({key: “username”, value: “Jackson”});
+<br/>response.setCookie({key: “password”, value: “xxxxxx”});</pre>
+<br/>用浏览器的网络工具或者curl看看响应头：
+<br/><pre class=“brush: bash; gutter: true; first-line: 1”>Set-Cookie: username=Jackson, password=xxxxxx</pre>
+<br/>再刷新浏览器检查是否将这两个cookie存储了（存储之后，下次请求会在request头中包含）。
+<br/>
+<br/>至此，Cookie的底层实现和包装都完成了。
+<br/>
+<br/>注意：由于Cookie的协议较多，有<strong>RFC2109</strong>，<strong>RFC2965</strong>，<strong>Netscape</strong><strong>标</strong><strong>准</strong>等，这里主要参考RFC2109标准，然后再根据现有浏览器和服务器的做法再中和实现的，在Chrome下测试通过。
+<br/><h3>Session支持</h3>
+<br/>上一节提到的如果Cookie被禁用了，那么Session是否可用这个问题。不知各位是否有答案。之所以有这样的一个面试题，其主要的原因是因为大多数的Session的实现，都是依赖Cookie的。而Cookie的作用，很大部分的功劳可以解决HTTP协议是种无状态协议，无法追踪和保持与用户的会话功能。这也是我们要先实现Cookie的一个原因。
+<br/>
+<br/>下面我们来看一眼截取自某网站的一段响应头：
+<br/><pre class=“brush: bash; gutter: true; first-line: 1”>Set-Cookie: sid=qwSsRlaZcQqFWC11ojBKW7Jc.vCqINHUqTnWEsH7VB4throHfZnNONt%2FKXwFx5xObRkA; path=/; expires=Tue, 15 Nov 2011 14:21:36 GMT; httpOnly</pre>
+<br/>实际上这段响应头被人拿到手里，甚至是可以构成帐号攻击的，具体细节不解释。
+<br/>
+<br/>还是继续老规矩吧，看看别的语言中Session的调用接口吧：
+<br/><ul>
+<br/>	<li>PHP
+<br/><pre class=“brush: php; gutter: true; first-line: 1”>$_SESSION[‘views’]
+<br/>unset($_SESSION[‘views’]);
+<br/>session_destroy();</pre>
+<br/></li>
+<br/>	<li>ASP
+<br/><pre class=“brush: vb; gutter: true; first-line: 1”>Session(“date”)=“2001/05/05”
+<br/>Session.Contents.Remove(“test2”)
+<br/>Contents.RemoveAll()
+<br/>Session.Abandon</pre>
+<br/></li>
+<br/></ul>
+<br/>那么我们的调用API也是很简单的：session.get(name)/session.set(name, value)/session.remove(name)/session.removeAll()/session.abandon()。所以在session.js文件中创建如下内容吧。
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>exports.Session = function () {
+<br/>    this._map = {};
+<br/>};
+<br/>
+<br/>Session.prototype.set = function (name, value) {
+<br/>    this._map[name] = value;
+<br/>};
+<br/>
+<br/>Session.prototype.get = function (name) {
+<br/>    return this._map[name];
+<br/>};
+<br/>
+<br/>Session.prototype.remove = function (key) {
+<br/>    delete this._map[key];
+<br/>};
+<br/>
+<br/>Session.prototype.removeAll = function () {
+<br/>    delete this._map;
+<br/>    this._map = {};
+<br/>};</pre>
+<br/>再回顾一下Session的一些特性：
+<br/><ol>
+<br/>	<li>服务器与每一个用户之间保持一个Session。</li>
+<br/>	<li>两个用户之间的Session不会被共享。</li>
+<br/>	<li>Session有过期时间。如果在过期时间之前没有更新会话时间，则会超时。</li>
+<br/></ol>
+<br/>所以我们需要一个Session的管理器来维护客户端与服务端的联系，以及处理超时。像大多数服务器一样，我们的timeout也是可配置的。
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>exports.Timeout = 20 * 60 * 1000;</pre>
+<br/>SessionManager因为需要管理全局的Session，所以算是服务器级别的。而Session存在于请求级别中，可以供程序员后续调用。
+<br/><p align=“center”> <a href=“http://static.data.taobaocdn.com/up/nodeclub/2011/12/session.png”><img class=“alignnone size-medium wp-image-4525” title=“session” src=“http://static.data.taobaocdn.com/up/nodeclub/2011/12/session-244x300.png” alt=”" width=“244” height=“300” /></a></p>
+<br/>Session Manager干的事情，其实就是检查session，如果不存在或者已经过期了，就重新创建一个新的session，给后续调用。以下是这个流程图的代码实现：
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>var sessionId = request.cookie(session.SESSIONID_KEY);
+<br/>var curSession;
+<br/>
+<br/>if (sessionId && (curSession = sessionManager.get(sessionId))) {
+<br/>    if (curSession.isTimeout()) {
+<br/>        sessionManager.remove(sessionId);
+<br/>        curSession = sessionManager.renew(response);
+<br/>    } else {
+<br/>        curSession.updateTime();
+<br/>    }
+<br/>} else {
+<br/>    curSession = sessionManager.renew(response);
+<br/>}</pre>
+<br/>至于获取session，判断session是否timeout，以及重新创建一个session的方法实现，直接看代码吧：
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>var SessionManager = function (timeout) {
+<br/>    this.timeout = timeout;
+<br/>    this._sessions = {};
+<br/>};
+<br/>
+<br/>SessionManager.prototype.renew = function (response) {
+<br/>    var that = this;
+<br/>    var sessionId = [new Date().getTime(), Math.round(Math.random() * 1000)].join("");
+<br/>    var session = new Session(sessionId);
+<br/>    session.updateTime();
+<br/>    this._sessions[sessionId] = session;
+<br/>    var clientTimeout = 30 * 24 * 60 * 60 * 1000;
+<br/>    var cookie = {key: SESSIONID_KEY, value: sessionId, path: “/”, expires: new Date().getTime() + clientTimeout};
+<br/>    response.setCookie(cookie);
+<br/>    return session;
+<br/>};
+<br/>
+<br/>SessionManager.prototype.get = function (sessionId) {
+<br/>    return this._sessions[sessionId];
+<br/>};
+<br/>
+<br/>SessionManager.prototype.remove = function (sessionId) {
+<br/>    delete this._sessions[sessionId];
+<br/>};
+<br/>
+<br/>SessionManager.prototype.isTimeout = function (session) {
+<br/>    return (session._updateTime + this.timeout) < new Date().getTime();
+<br/>};</pre>
+<br/>业务逻辑代码上起来，常常session的味道吧：
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>var handle = function (session) {
+<br/>    response.setHeader(“Content-Type”, “text/plain”);
+<br/>    response.writeHead(200, “Ok”);
+<br/>    if (!session.get(“username”)) {
+<br/>        session.set(“username”, request.get(“username”));
+<br/>    }
+<br/>    response.write(“Hi, " + session.get(“username”) + “\n\r”);
+<br/>    response.end();
+<br/>};</pre>
+<br/>我们首先访问http://localhost:8080/，看看有什么响应：
+<br/><pre class=“brush: bash; gutter: true; first-line: 1”>Hi, undefined</pre>
+<br/>继续访问http://localhost:8080/?username=jacksontian ：
+<br/><pre class=“brush: bash; gutter: true; first-line: 1”>Hi, jacksontian</pre>
+<br/>再继续访问http://localhost:8080/，看看是否成功：
+<br/><pre class=“brush: bash; gutter: true; first-line: 1”>Hi, jacksontian</pre>
+<br/>其实如果你用Chrome来测试这一段的话，也许是不成功的。因为浏览器会同时发送2个请求到服务端，你不知道的那一个是/favicon.ico。为了不影响你的测试，首先干掉这个调皮鬼吧：
+<br/><pre class=“brush: javascript; gutter: true; first-line: 1”>if (request.url == “/favicon.ico”) {
+<br/>    response.writeHead(404, “Not Found”);
+<br/>    response.end();
+<br/>    return;
+<br/>}</pre>
+<br/>至此，session部分打造完毕。
+<br/>
+<br/>最后值得注意的是，由于Cookie不能被不同的浏览器共享，所以服务端每次给不同的客户端分配的Session ID是不同的，导致多个浏览器之间不能共享会话。也因为服务端与同一个客户端只根据一个Session ID来做判断，所以通常一个站点不能支持多帐号在一个客户端中同时登陆。
+<br/><h3>动态服务器与静态服务器对比</h3>
+<br/>一般而言，一个服务器是能够Handle所有的动态静态请求的，比如Apache（添加了PHP模块支持的）。但是我们还是可以简单的分析一下动静态服务器之间的需求差别的。
+<br/>
+<br/>静态文件服务器:
+<br/><ul>
+<br/>	<li>不需要Cookie，Session之类来保证状态</li>
+<br/>	<li>不需处理GET，POST方法上传的数据</li>
+<br/>	<li>通常具可备缓存性</li>
+<br/>	<li>版本有效性</li>
+<br/></ul>
+<br/>动态服务器：
+<br/><ul>
+<br/>	<li>需要追踪状态，验证身份</li>
+<br/>	<li>需要处理请求上传的数据，来动态响应</li>
+<br/>	<li>响应不具备可缓存性</li>
+<br/>	<li>永远只有现在一个版本</li>
+<br/></ul>
+<br/>所以对于Cookie，Session一类的检测和判断，完全不必要放到静态文件服务器上。而动态服务器也是不需要304之类的条件请求和Expires之类的头的。为了提高各自的性能，所以彼此之间不必交叉满足所有需求。
+<br/>
+<br/>下一章节将会在这部分Get/Post处理，cookie处理，session处理的基础上介绍如何搭建一个MVC框架。
+<br/>
+<br/>本文代码可于<a href=“https://github.com/JacksonTian/ping/zipball/dynamic_server” target=”_blank">https://github.com/JacksonTian/ping/zipball/dynamic_server</a> 下载
+<br/>
+<br/>项目地址：<a href=“https://github.com/JacksonTian/ping”>https://github.com/JacksonTian/ping</a> 项目改名字为ping了。
+</body>
+</html>
