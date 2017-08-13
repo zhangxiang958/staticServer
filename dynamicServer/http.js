@@ -24,11 +24,26 @@ var router = require('./router.js');
 
 var server = http.createServer();
 
-router.get('/', function(request, response){
+router.get('/', function(request, response, currSession){
+  //setCookie 需要在 writeHead 之前,否则会报错 Error: Can't set headers after they are sent.
+  response.setCookie({
+    key: 'fuck',
+    value: 'test'
+  });
   response.writeHead(200, {
     'Content-Type': 'text/plain'
   });
-  response.end('index');
+  if(currSession.get('username')) {
+
+    response.end('welcome back' + currSession.get('username'));
+  } else {
+
+    currSession.set('username', 'zhang');
+    console.log(currSession.get('username'));
+    // console.log(request.cookie('foo'));
+    response.end('index');
+  }
+  
 });
 
 router.get('/api/testGet', function(request, response){
@@ -48,6 +63,7 @@ router.post('/api/testGet', function(request, response){
 });
 router.post('/api/testPost', function(request, response){
   var body = request.body('test');
+  console.log(body);
   response.writeHead(200, {
     'Content-Type': 'text/palin'
   });
